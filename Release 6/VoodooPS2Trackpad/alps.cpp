@@ -210,7 +210,7 @@ bool AppleUSBMultitouchDriver::deviceSpecificInit() {
     return true;
     
 init_fail:
-    IOLog("ALPS: Device initialization failed. Touchpad probably won't work\n", getName());
+    IOLog("ALPS: Device initialization failed. Touchpad probably won't work\n");
     resetMouse();
     return false;
 }
@@ -341,7 +341,7 @@ void AppleUSBMultitouchDriver::processPacketV1V2(UInt8 *packet) {
         fingers = 0;
     }
     
-    dispatchEventsWithInfo(x, y, z, fingers, buttons);
+    dispatchEventsWithInfo(x, y, 0, 0, z, fingers, buttons);
     
     if (priv.flags & ALPS_WHEEL) {
         int scrollAmount = ((packet[2] << 1) & 0x08) - ((packet[0] >> 4) & 0x07);
@@ -775,7 +775,7 @@ void AppleUSBMultitouchDriver::alps_process_touchpad_packet_v3_v5(UInt8 *packet)
     if (last_fingers == 2 && fingers == 1) {
         fingers = last_fingers;
     }
-    dispatchEventsWithInfo(f.mt[0].x, f.mt[0].y, f.pressure, fingers, buttons);
+    dispatchEventsWithInfo(f.mt[0].x, f.mt[0].y, f.mt[1].x, f.mt[1].y, f.pressure, fingers, buttons);
 }
 
 void AppleUSBMultitouchDriver::processPacketV3(UInt8 *packet) {
@@ -797,7 +797,7 @@ void AppleUSBMultitouchDriver::processPacketV3(UInt8 *packet) {
 
 void AppleUSBMultitouchDriver::alps_process_packet_v6(UInt8 *packet)
 {
-    int x, y, z, left, right, middle, buttons,fingers = 0;
+    int x, y, z, left, right, middle, buttons = 0,fingers = 0;
     uint64_t now_abs;
     clock_get_uptime(&now_abs);
     
@@ -846,7 +846,7 @@ void AppleUSBMultitouchDriver::alps_process_packet_v6(UInt8 *packet)
     buttons |= left ? 0x01 : 0;
     buttons |= right ? 0x02 : 0;
     
-    dispatchEventsWithInfo(x, y, z, fingers, buttons);
+    dispatchEventsWithInfo(x, y, 0, 0, z, fingers, buttons);
 }
 
 void AppleUSBMultitouchDriver::processPacketV4(UInt8 *packet) {
@@ -899,7 +899,7 @@ void AppleUSBMultitouchDriver::processPacketV4(UInt8 *packet) {
     buttons |= f.left ? 0x01 : 0;
     buttons |= f.right ? 0x02 : 0;
     
-    dispatchEventsWithInfo(f.st.x, f.st.y, f.pressure, fingers, buttons);
+    dispatchEventsWithInfo(f.st.x, f.st.y, 0, 0, f.pressure, fingers, buttons);
 }
 
 unsigned char AppleUSBMultitouchDriver::alps_get_packet_id_v7(UInt8 *byte)
@@ -1040,7 +1040,7 @@ void AppleUSBMultitouchDriver::processTrackstickPacketV7(UInt8 *packet)
 {
     uint64_t now_abs;
     clock_get_uptime(&now_abs);
-    int x, y, z, left, right, middle, buttons;
+    int x, y, z, left, right, middle, buttons = 0;
     
     /* It should be a DualPoint when received trackstick packet */
     if (!(priv.flags & ALPS_DUALPOINT)) {
@@ -1091,17 +1091,13 @@ void AppleUSBMultitouchDriver::processTouchpadPacketV7(UInt8 *packet){
     
     fingers = f.fingers;
     
-    /* Reverse y co-ordinates to have 0 at bottom for gestures to work */
-    f.mt[0].y = priv.y_max - f.mt[0].y;
-    f.mt[1].y = priv.y_max - f.mt[1].y;
-    
     //Hack because V7 doesn't report pressure
     if (fingers != 0 && (f.mt[0].x != 0 && f.mt[0].y != 0))
         f.pressure = 40;
     else
         f.pressure = 0;
     
-    dispatchEventsWithInfo(f.mt[0].x, f.mt[0].y, f.pressure, fingers, buttons);
+    dispatchEventsWithInfo(f.mt[0].x, f.mt[0].y, f.mt[1].x, f.mt[1].y, f.pressure, fingers, buttons);
 }
 
 void AppleUSBMultitouchDriver::processPacketV7(UInt8 *packet){
@@ -1310,588 +1306,50 @@ void AppleUSBMultitouchDriver::alps_process_packet_ss4_v2(UInt8 *packet) {
         buttons |= f.ts_right ? 0x02 : 0;
         buttons |= f.ts_middle ? 0x04 : 0;
     }
-    
-    /* Reverse y co-ordinates to have 0 at bottom for gestures to work */
-    f.mt[0].y = priv.y_max - f.mt[0].y;
-    f.mt[1].y = priv.y_max - f.mt[1].y;
-    
     IOLog("ALPS: Process V8: Fingers=%d, x1=%d, y1=%d, z=%d, buttons=%d\n", f.fingers, f.mt[0].x, f.mt[0].y, f.pressure, buttons);
-    dispatchEventsWithInfo(f.mt[0].x, f.mt[0].y, f.pressure, f.fingers, buttons);
+    dispatchEventsWithInfo(f.mt[0].x, f.mt[0].y, f.mt[1].x, f.mt[1].y, f.pressure, f.fingers, buttons);
 }
 
-void AppleUSBMultitouchDriver::dispatchEventsWithInfo(int xraw, int yraw, int z, int fingers, UInt32 buttonsraw) {
-    uint64_t now_abs;
-    clock_get_uptime(&now_abs);
-    uint64_t now_ns;
-    absolutetime_to_nanoseconds(now_abs, &now_ns);
-    
+void AppleUSBMultitouchDriver::dispatchEventsWithInfo(int xraw1, int yraw1, int xraw2, int yraw2, int z, int fingers, UInt32 buttonsraw) {
     DEBUG_LOG("%s::dispatchEventsWithInfo: x=%d, y=%d, z=%d, fingers=%d, buttons=%d\n",
               getName(), xraw, yraw, z, fingers, buttonsraw);
     
-    // scale x & y to the axis which has the most resolution
-    if (xupmm < yupmm) {
-        xraw = xraw * yupmm / xupmm;
-    } else if (xupmm > yupmm) {
-        yraw = yraw * xupmm / yupmm;
+    _fingerCount = fingers;
+    
+    xraw1 /= 5;
+    xraw2 /= 5;
+    yraw1 /= 5;
+    yraw2 /= 5;
+    
+    if (xraw1 == 0)
+        xraw1 = -1;
+    if (xraw2 == 0)
+        xraw2 = -1;
+    if (yraw1 == 0)
+        yraw1 = -1;
+    if (yraw2 == 0)
+        yraw2 = -1;
+    
+    if (fingers < 2){
+        xraw2 = -1;
+        yraw2 = -1;
+    }
+    if (fingers < 1){
+        xraw1 = -1;
+        xraw2 = -1;
     }
     
-    /* Dr Hurt: Scale all touchpads' x axis to 6000 to be able to the same divisor for all models */
-    if (priv.proto_version == ALPS_PROTO_V2) {
-        xraw *= 6;
-        yraw *= 6;
-    }
+    _xraw1 = xraw1;
+    _yraw1 = yraw1;
     
-    if (priv.proto_version > ALPS_PROTO_V2 && priv.proto_version < ALPS_PROTO_V5) {
-        xraw *= 3;
-        yraw *= 3;
-    }
+    _xraw2 = xraw2;
+    _yraw2 = yraw2;
     
-    if (priv.proto_version == ALPS_PROTO_V5) {
-        xraw *= 4.4;
-        yraw *= 4.4;
-    }
+    _buttonDown = (buttonsraw != 0);
     
-    if (priv.proto_version == ALPS_PROTO_V7) {
-        xraw *= 1.5;
-        yraw *= 1.5;
-    }
-    
-    if (priv.proto_version == ALPS_PROTO_V8) {
-        xraw /= 1.4;
-        yraw /= 1.4;
-    }
-    
-    int x = xraw;
-    int y = yraw;
     
     fingers = z > z_finger ? fingers : 0;
     
-    // allow middle click to be simulated the other two physical buttons
-    UInt32 buttons = buttonsraw;
-    lastbuttons = buttons;
-    
-    // allow middle button to be simulated with two buttons down
-    if (!clickpadtype || fingers == 3) {
-        buttons = middleButton(buttons, now_abs, fingers == 3 ? fromPassthru : fromTrackpad);
-        DEBUG_LOG("New buttons value after check for middle click: %d\n", buttons);
-    }
-    
-    // recalc middle buttons if finger is going down
-    if (0 == last_fingers && fingers > 0) {
-        buttons = middleButton(buttonsraw | passbuttons, now_abs, fromCancel);
-    }
-    
-    if (last_fingers > 0 && fingers > 0 && last_fingers != fingers) {
-        DEBUG_LOG("Start ignoring delta with finger change\n");
-        // ignore deltas for a while after finger change
-        ignoredeltas = ignoredeltasstart;
-    }
-    
-    if (last_fingers != fingers) {
-        DEBUG_LOG("Finger change, reset averages\n");
-        // reset averages after finger change
-        x_undo.reset();
-        y_undo.reset();
-        x_avg.reset();
-        y_avg.reset();
-    }
-    
-    // unsmooth input (probably just for testing)
-    // by default the trackpad itself does a simple decaying average (1/2 each)
-    // we can undo it here
-    if (unsmoothinput) {
-        x = x_undo.filter(x);
-        y = y_undo.filter(y);
-    }
-    
-    // smooth input by unweighted average
-    if (smoothinput) {
-        x = x_avg.filter(x);
-        y = y_avg.filter(y);
-        
-    }
-    
-    if (ignoredeltas) {
-        DEBUG_LOG("Still ignoring deltas. Value=%d\n", ignoredeltas);
-        lastx = x;
-        lasty = y;
-        if (--ignoredeltas == 0) {
-            x_undo.reset();
-            y_undo.reset();
-            x_avg.reset();
-            y_avg.reset();
-        }
-    }
-    
-    // deal with "OutsidezoneNoAction When Typing"
-    if (outzone_wt && z > z_finger && now_ns - keytime < maxaftertyping &&
-        (x < zonel || x > zoner || y < zoneb || y > zonet)) {
-        DEBUG_LOG("Ignore touch input after typing\n");
-        // touch input was shortly after typing and outside the "zone"
-        // ignore it...
-        return;
-    }
-    
-    // if trackpad input is supposed to be ignored, then don't do anything
-    if (ignoreall) {
-        DEBUG_LOG("ignoreall is set, returning\n");
-        return;
-    }
-    
-#ifdef DEBUG_VERBOSE
-    int tm1 = touchmode;
-#endif
-    if (z < z_finger && isTouchMode()) {
-        // Finger has been lifted
-        DEBUG_LOG("finger lifted after touch\n");
-        xrest = yrest = scrollrest = 0;
-        inSwipeLeft = inSwipeRight = inSwipeUp = inSwipeDown = 0;
-        inSwipe4Left = inSwipe4Right = inSwipe4Up = inSwipe4Down = 0;
-        xmoved = ymoved = 0;
-        untouchtime = now_ns;
-        tracksecondary = false;
-        
-        if (dy_history.count()) {
-            DEBUG_LOG("ps2: newest=%llu, oldest=%llu, diff=%llu, avg: %d/%d=%d\n", time_history.newest(), time_history.oldest(), time_history.newest() - time_history.oldest(), dy_history.sum(), dy_history.count(), dy_history.average());
-        }
-        else {
-            DEBUG_LOG("ps2: no time/dy history\n");
-        }
-        
-        // check for scroll momentum start
-        if ((MODE_MTOUCH == touchmode || MODE_VSCROLL == touchmode) && momentumscroll && momentumscrolltimer) {
-            // releasing when we were in touchmode -- check for momentum scroll
-            if (dy_history.count() > momentumscrollsamplesmin &&
-                (momentumscrollinterval = time_history.newest() - time_history.oldest())) {
-                momentumscrollsum = dy_history.sum();
-                momentumscrollcurrent = momentumscrolltimer * momentumscrollsum;
-                momentumscrollrest1 = 0;
-                momentumscrollrest2 = 0;
-                setTimerTimeout(scrollTimer, momentumscrolltimer);
-            }
-        }
-        time_history.reset();
-        dy_history.reset();
-        DEBUG_LOG("ps2: now_ns-touchtime=%lld (%s). touchmode=%d\n", (uint64_t) (now_ns - touchtime) / 1000, now_ns - touchtime < maxtaptime ? "true" : "false", touchmode);
-        if (now_ns - touchtime < maxtaptime && clicking) {
-            switch (touchmode) {
-                case MODE_DRAG:
-                    if (!immediateclick) {
-                        buttons &= ~0x7;
-                        dispatchRelativePointerEventX(0, 0, buttons | 0x1, now_abs);
-                        dispatchRelativePointerEventX(0, 0, buttons, now_abs);
-                    }
-                    if (wastriple && rtap) {
-                        buttons |= !swapdoubletriple ? 0x4 : 0x02;
-                    } else if (wasdouble && rtap) {
-                        buttons |= !swapdoubletriple ? 0x2 : 0x04;
-                    } else {
-                        buttons |= 0x1;
-                    }
-                    touchmode = MODE_NOTOUCH;
-                    break;
-                    
-                case MODE_DRAGLOCK:
-                    touchmode = MODE_NOTOUCH;
-                    break;
-                    
-                default: //dispatch taps
-                    if (wastriple && rtap)
-                    {
-                        buttons |= !swapdoubletriple ? 0x4 : 0x02;
-                        touchmode=MODE_NOTOUCH;
-                    }
-                    else if (wasdouble && rtap)
-                    {
-                        buttons |= !swapdoubletriple ? 0x2 : 0x04;
-                        touchmode=MODE_NOTOUCH;
-                    }
-                    else
-                    {
-                        buttons |= 0x1;
-                        touchmode=dragging ? MODE_PREDRAG : MODE_NOTOUCH;
-                    }
-                    break;
-            }
-        }
-        else {
-            if ((touchmode==MODE_DRAG || touchmode==MODE_DRAGLOCK)
-                && (draglock || draglocktemp || (dragTimer && dragexitdelay)))
-            {
-                touchmode=MODE_DRAGNOTOUCH;
-                if (!draglock && !draglocktemp)
-                {
-                    cancelTimer(dragTimer);
-                    setTimerTimeout(dragTimer, dragexitdelay);
-                }
-            } else {
-                touchmode = MODE_NOTOUCH;
-                draglocktemp = 0;
-            }
-        }
-        wasdouble = false;
-        wastriple = false;
-    }
-    
-    // cancel pre-drag mode if second tap takes too long
-    if (touchmode == MODE_PREDRAG && now_ns - untouchtime >= maxdragtime) {
-        DEBUG_LOG("cancel pre-drag since second tap took too long\n");
-        touchmode = MODE_NOTOUCH;
-    }
-    
-    // Note: This test should probably be done somewhere else, especially if to
-    // implement more gestures in the future, because this information we are
-    // erasing here (time of touch) might be useful for certain gestures...
-    
-    // cancel tap if touch point moves too far
-    if (isTouchMode() && isFingerTouch(z)) {
-        int dx = xraw > touchx ? xraw - touchx : touchx - xraw;
-        int dy = yraw > touchy ? touchy - yraw : yraw - touchy;
-        if (!wasdouble && !wastriple && (dx > tapthreshx || dy > tapthreshy)) {
-            touchtime = 0;
-        }
-        else if (dx > dblthreshx || dy > dblthreshy) {
-            touchtime = 0;
-        }
-    }
-    
-#ifdef DEBUG_VERBOSE
-    int tm2 = touchmode;
-#endif
-    int dx = 0, dy = 0;
-    
-    DEBUG_LOG("ps2: touchmode=%d, buttons = %d\n", touchmode, buttons);
-    switch (touchmode) {
-        case MODE_DRAG:
-        case MODE_DRAGLOCK:
-            if (MODE_DRAGLOCK == touchmode || (!immediateclick || now_ns - touchtime > maxdbltaptime)) {
-                buttons |= 0x1;
-            }
-            // fall through
-        case MODE_MOVE:
-            if (last_fingers == fingers)
-            {
-                if (now_ns - touchtime > 100000000) {
-                    dx = x-lastx+xrest;
-                    dy = lasty-y+yrest;
-                    xrest = dx % divisorx;
-                    yrest = dy % divisory;
-                    if (abs(dx) > bogusdxthresh || abs(dy) > bogusdythresh)
-                        dx = dy = xrest = yrest = 0;
-                }
-            }
-            break;
-            
-        case MODE_MTOUCH:
-            switch (fingers) {
-                    
-                case 1:
-                    // transition from multitouch to single touch
-                    // continue moving with the primary finger
-                    if (last_fingers == fingers && !wsticky)
-                    {
-                        dy_history.reset();
-                        time_history.reset();
-                        //tracksecondary=false;
-                        touchmode=MODE_MOVE;
-                        break;
-                    }
-                    
-                case 2: // two finger
-                    if (last_fingers != fingers) {
-                        break;
-                    }
-                    if (palm && z > zlimit) {
-                        break;
-                    }
-                    if (palm_wt && now_ns - keytime < maxaftertyping) {
-                        break;
-                    }
-                    dy = (wvdivisor) ? (y-lasty+yrest) : 0;
-                    dx = (whdivisor&&hscroll) ? (x-lastx+xrest) : 0;
-                    yrest = (wvdivisor) ? dy % wvdivisor : 0;
-                    xrest = (whdivisor&&hscroll) ? dx % whdivisor : 0;
-                    // check for stopping or changing direction
-                    if ((dy < 0) != (dy_history.newest() < 0) || dy == 0) {
-                        // stopped or changed direction, clear history
-                        dy_history.reset();
-                        time_history.reset();
-                    }
-                    // put movement and time in history for later
-                    dy_history.filter(dy);
-                    time_history.filter(now_ns);
-                    //REVIEW: filter out small movements (Mavericks issue)
-                    if (abs(dx) < scrolldxthresh)
-                    {
-                        xrest = dx;
-                        dx = 0;
-                    }
-                    if (abs(dy) < scrolldythresh)
-                    {
-                        yrest = dy;
-                        dy = 0;
-                    }
-                   
-                    if (0 != dy || 0 != dx)
-                    {
-                        
-                        dispatchScrollWheelEventX(wvdivisor ? dy / wvdivisor : 0, (whdivisor && hscroll) ? -dx / whdivisor : 0, 0, now_abs);
-                        dx = dy = 0;
-                    }
-                    break;
-                    
-                case 3: // three finger
-                    if (threefingerhorizswipe || threefingervertswipe) {
-                        // Now calculate total movement since 3 fingers down (add to total)
-                        xmoved += lastx-x;
-                        ymoved += y-lasty;
-                        
-                        // dispatching 3 finger movement
-                        if (ymoved > swipedy && !inSwipeUp && !inSwipe4Up && threefingervertswipe) {
-                            inSwipeUp = 1;
-                            inSwipeDown = 0;
-                            ymoved = 0;
-                            _device->dispatchKeyboardMessage(kPS2M_swipeUp, &now_abs);
-                            break;
-                        }
-                        if (ymoved < -swipedy && !inSwipeDown && !inSwipe4Down && threefingervertswipe) {
-                            inSwipeDown = 1;
-                            inSwipeUp = 0;
-                            ymoved = 0;
-                            _device->dispatchKeyboardMessage(kPS2M_swipeDown, &now_abs);
-                            break;
-                        }
-                        if (xmoved < -swipedx && !inSwipeRight && !inSwipe4Right && threefingerhorizswipe) {
-                            inSwipeRight = 1;
-                            inSwipeLeft = 0;
-                            xmoved = 0;
-                            _device->dispatchKeyboardMessage(kPS2M_swipeRight, &now_abs);
-                            break;
-                        }
-                        if (xmoved > swipedx && !inSwipeLeft && !inSwipe4Left && threefingerhorizswipe) {
-                            inSwipeLeft = 1;
-                            inSwipeRight = 0;
-                            xmoved = 0;
-                            _device->dispatchKeyboardMessage(kPS2M_swipeLeft, &now_abs);
-                            break;
-                        }
-                    }
-                    break;
-                    
-                case 4: // four fingers
-                    // Now calculate total movement since 4 fingers down (add to total)
-                    xmoved += lastx-x;
-                    ymoved += y-lasty;
-                    
-                    // dispatching 4 finger movement
-                    if (ymoved > swipedy && !inSwipe4Up) {
-                        inSwipe4Up = 1; inSwipeUp = 0;
-                        inSwipe4Down = 0;
-                        ymoved = 0;
-                        _device->dispatchKeyboardMessage(kPS2M_swipe4Up, &now_abs);
-                        break;
-                    }
-                    if (ymoved < -swipedy && !inSwipe4Down) {
-                        inSwipe4Down = 1; inSwipeDown = 0;
-                        inSwipe4Up = 0;
-                        ymoved = 0;
-                        _device->dispatchKeyboardMessage(kPS2M_swipe4Down, &now_abs);
-                        break;
-                    }
-                    if (xmoved < -swipedx && !inSwipe4Right) {
-                        inSwipe4Right = 1; inSwipeRight = 0;
-                        inSwipe4Left = 0;
-                        xmoved = 0;
-                        _device->dispatchKeyboardMessage(kPS2M_swipe4Right, &now_abs);
-                        break;
-                    }
-                    if (xmoved > swipedx && !inSwipe4Left) {
-                        inSwipe4Left = 1; inSwipeLeft = 0;
-                        inSwipe4Right = 0;
-                        xmoved = 0;
-                        _device->dispatchKeyboardMessage(kPS2M_swipe4Left, &now_abs);
-                        break;
-                    }
-            }
-            break;
-            
-        case MODE_VSCROLL:
-            if (!vsticky && (x < redge || fingers > 1 || z > zlimit)) {
-                touchmode = MODE_NOTOUCH;
-                break;
-            }
-            if (palm_wt && now_ns - keytime < maxaftertyping) {
-                break;
-            }
-            dy = y-lasty+scrollrest;
-            scrollrest = dy % vscrolldivisor;
-            //REVIEW: filter out small movements (Mavericks issue)
-            if (abs(dy) < scrolldythresh)
-            {
-                scrollrest = dy;
-                dy = 0;
-            }
-            if ((dy < 0) != (dy_history.newest() < 0) || dy == 0) {
-                // stopped or changed direction, clear history
-                dy_history.reset();
-                time_history.reset();
-            }
-            // put movement and time in history for later
-            dy_history.filter(dy);
-            time_history.filter(now_ns);
-            if (dy)
-            {
-                dispatchScrollWheelEventX(dy / vscrolldivisor, 0, 0, now_abs);
-                dy = 0;
-            }
-            break;
-            
-        case MODE_HSCROLL:
-            if (!hsticky && (y > bedge || fingers > 1 || z > zlimit)) {
-                touchmode = MODE_NOTOUCH;
-                break;
-            }
-            if (palm_wt && now_ns - keytime < maxaftertyping) {
-                break;
-            }
-            dx = lastx-x+scrollrest;
-            scrollrest = dx % hscrolldivisor;
-            //REVIEW: filter out small movements (Mavericks issue)
-            if (abs(dx) < scrolldxthresh)
-            {
-                scrollrest = dx;
-                dx = 0;
-            }
-            if (dx)
-            {
-                dispatchScrollWheelEventX(0, dx / hscrolldivisor, 0, now_abs);
-                dx = 0;
-            }
-            break;
-            
-        case MODE_CSCROLL:
-            if (palm_wt && now_ns - keytime < maxaftertyping) {
-                break;
-            }
-            
-            if (y < centery) {
-                dx = x - lastx;
-            }
-            else {
-                dx = lastx - x;
-            }
-            
-            if (x < centerx) {
-                dx += lasty - y;
-            }
-            else {
-                dx += y - lasty;
-                dx += scrollrest;
-                scrollrest = dx % cscrolldivisor;
-            }
-            //REVIEW: filter out small movements (Mavericks issue)
-            if (abs(dx) < scrolldxthresh)
-            {
-                scrollrest = dx;
-                dx = 0;
-            }
-            if (dx)
-            {
-                dispatchScrollWheelEventX(dx / cscrolldivisor, 0, 0, now_abs);
-                dx = 0;
-            }
-            break;
-            
-        case MODE_DRAGNOTOUCH:
-            buttons |= 0x1;
-            // fall through
-        case MODE_PREDRAG:
-            if (!immediateclick && (!palm_wt || now_ns - keytime >= maxaftertyping)) {
-                buttons |= 0x1;
-            }
-        case MODE_NOTOUCH:
-            break;
-            
-        default:; // nothing
-    }
-    
-    // capture time of tap, and watch for double/triple tap
-    if (isFingerTouch(z)) {
-        // taps don't count if too close to typing or if currently in momentum scroll
-        if ((!palm_wt || now_ns - keytime >= maxaftertyping) && !momentumscrollcurrent) {
-            if (!isTouchMode()) {
-                touchtime = now_ns;
-                touchx = x;
-                touchy = y;
-            }
-            if (fingers == 2) {
-                wasdouble = true;
-            } else if (fingers == 3) {
-                wastriple = true;
-            }
-        }
-        // any touch cancels momentum scroll
-        momentumscrollcurrent = 0;
-    }
-    // switch modes, depending on input
-    if (touchmode == MODE_PREDRAG && isFingerTouch(z)) {
-        touchmode = MODE_DRAG;
-        draglocktemp = _modifierdown & draglocktempmask;
-    }
-    if (touchmode == MODE_DRAGNOTOUCH && isFingerTouch(z)) {
-        if (dragTimer)
-            cancelTimer(dragTimer);
-        touchmode=MODE_DRAGLOCK;
-    }
-    ////if ((w>wlimit || w<3) && isFingerTouch(z) && scroll && (wvdivisor || (hscroll && whdivisor)))
-    if (MODE_MTOUCH != touchmode && (fingers > 1) && isFingerTouch(z)) {
-        touchmode = MODE_MTOUCH;
-        tracksecondary = false;
-    }
-    
-    if (scroll && cscrolldivisor) {
-        if (touchmode == MODE_NOTOUCH && z > z_finger && y > tedge && (ctrigger == 1 || ctrigger == 9))
-            touchmode = MODE_CSCROLL;
-        if (touchmode == MODE_NOTOUCH && z > z_finger && y > tedge && x > redge && (ctrigger == 2))
-            touchmode = MODE_CSCROLL;
-        if (touchmode == MODE_NOTOUCH && z > z_finger && x > redge && (ctrigger == 3 || ctrigger == 9))
-            touchmode = MODE_CSCROLL;
-        if (touchmode == MODE_NOTOUCH && z > z_finger && x > redge && y < bedge && (ctrigger == 4))
-            touchmode = MODE_CSCROLL;
-        if (touchmode == MODE_NOTOUCH && z > z_finger && y < bedge && (ctrigger == 5 || ctrigger == 9))
-            touchmode = MODE_CSCROLL;
-        if (touchmode == MODE_NOTOUCH && z > z_finger && y < bedge && x < ledge && (ctrigger == 6))
-            touchmode = MODE_CSCROLL;
-        if (touchmode == MODE_NOTOUCH && z > z_finger && x < ledge && (ctrigger == 7 || ctrigger == 9))
-            touchmode = MODE_CSCROLL;
-        if (touchmode == MODE_NOTOUCH && z > z_finger && x < ledge && y > tedge && (ctrigger == 8))
-            touchmode = MODE_CSCROLL;
-    }
-    if ((MODE_NOTOUCH == touchmode || (MODE_HSCROLL == touchmode && y >= bedge)) &&
-        z > z_finger && x > redge && vscrolldivisor && scroll) {
-        touchmode = MODE_VSCROLL;
-        scrollrest = 0;
-    }
-    if ((MODE_NOTOUCH == touchmode || (MODE_VSCROLL == touchmode && x <= redge)) &&
-        z > z_finger && y < bedge && hscrolldivisor && scroll) {
-        touchmode = MODE_HSCROLL;
-        scrollrest = 0;
-    }
-    if (touchmode == MODE_NOTOUCH && z > z_finger && last_fingers != 2) {
-        touchmode = MODE_MOVE;
-    }
-    
-    // dispatch dx/dy and current button status
-    dispatchRelativePointerEventX(dx / divisorx, dy / divisory, buttons, now_abs);
-    
-    // always save last seen position for calculating deltas later
-    lastx = x;
-    lasty = y;
-    last_fingers = fingers;
-    
-#ifdef DEBUG_VERBOSE
-    DEBUG_LOG("ps2: dx=%d, dy=%d (%d,%d) z=%d mode=(%d,%d,%d) buttons=%d wasdouble=%d wastriple=%d\n", dx, dy, x, y, z, tm1, tm2, touchmode, buttons, wasdouble, wastriple);
-#endif
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -

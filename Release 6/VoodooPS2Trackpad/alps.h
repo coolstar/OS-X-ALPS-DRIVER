@@ -365,7 +365,7 @@ protected:
     
     void alps_process_packet_ss4_v2(UInt8 *packet);
     
-    void dispatchEventsWithInfo(int xraw, int yraw, int z, int fingers, UInt32 buttonsraw);
+    void dispatchEventsWithInfo(int xraw1, int yraw1, int xraw2, int yraw2, int z, int fingers, UInt32 buttonsraw);
     
     virtual void dispatchRelativePointerEventWithPacket(UInt8 *packet, UInt32 packetSize);
     

@@ -9,7 +9,7 @@
 #include <IOKit/IOTimerEventSource.h>
 #include <IOKit/hidsystem/IOHIPointing.h>
 #include <IOKit/IOCommandGate.h>
-#include "Decay.h"
+#include "csgesture.h"
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // VoodooPS2TouchPadBase Class Declaration
@@ -33,65 +33,32 @@ protected:
     UInt16              _touchPadVersion;
 
     IOCommandGate*      _cmdGate;
+    
+    int _xraw1;
+    int _yraw1;
+    
+    int _xraw2;
+    int _yraw2;
+    
+    int _fingerCount;
+    
+    bool _buttonDown;
+    
+    csgesture_softc softc;
+    CSGesture *_csgesture;
+    
+    IOTimerEventSource* _gestureTimer;
+    
     int z_finger;
-	int divisorx, divisory;
-	int ledge;
-	int redge;
-	int tedge;
-	int bedge;
-	int vscrolldivisor, hscrolldivisor, cscrolldivisor;
-	int ctrigger;
-	int centerx;
-	int centery;
-	uint64_t maxtaptime;
-	uint64_t maxdragtime;
-    uint64_t maxdbltaptime;
-	int hsticky,vsticky, wsticky, tapstable;
-	int wlimit, wvdivisor, whdivisor;
-	bool clicking;
-	bool dragging;
-    int threefingervertswipe;
-    int threefingerhorizswipe;
-	bool draglock;
-    int draglocktemp;
-	bool hscroll, vscroll, scroll;
-	bool rtap;
-    bool outzone_wt, palm, palm_wt;
-    int zlimit;
+    bool rtap;
     int noled;
     uint64_t maxaftertyping;
-    int mousemultiplierx, mousemultipliery;
-    int mousescrollmultiplierx, mousescrollmultipliery;
-    int mousemiddlescroll;
-    int wakedelay;
-    int smoothinput;
-    int unsmoothinput;
-    int skippassthru;
-    int tapthreshx, tapthreshy;
-    int dblthreshx, dblthreshy;
-    int zonel, zoner, zonet, zoneb;
-    int diszl, diszr, diszt, diszb;
-    int diszctrl; // 0=automatic (ledpresent), 1=enable always, -1=disable always
     int _resolution, _scrollresolution;
     int swipedx, swipedy;
     int _buttonCount;
-    int swapdoubletriple;
-    int draglocktempmask;
-    uint64_t clickpadclicktime;
-    int clickpadtrackboth;
     int ignoredeltasstart;
-    int bogusdxthresh, bogusdythresh;
-    int scrolldxthresh, scrolldythresh;
-    int immediateclick;
-
-    // three finger and four finger state
-    uint8_t inSwipeLeft, inSwipeRight;
-    uint8_t inSwipeUp, inSwipeDown;
-    uint8_t inSwipe4Left, inSwipe4Right;
-    uint8_t inSwipe4Up, inSwipe4Down;
-    int xmoved, ymoved;
-
-    int rczl, rczr, rczb, rczt; // rightclick zone for 1-button ClickPads
+    
+    bool momentumscroll;
 
     // state related to secondary packets/extendedwmode
     int lastx2, lasty2;
@@ -104,8 +71,6 @@ protected:
 	int lastx, lasty, last_fingers = 0;
     UInt32 lastbuttons;
     int ignoredeltas;
-	int xrest, yrest, scrollrest;
-    int touchx, touchy;
 	uint64_t touchtime;
 	uint64_t untouchtime;
 	bool wasdouble,wastriple;
@@ -141,44 +106,9 @@ protected:
 
     UInt32 _pendingbuttons;
     uint64_t _buttontime;
-    IOTimerEventSource* _buttonTimer;
     uint64_t _maxmiddleclicktime;
     int _fakemiddlebutton;
-
-    // momentum scroll state
-    bool momentumscroll;
-    SimpleAverage<int, 32> dy_history;
-    SimpleAverage<uint64_t, 32> time_history;
-    IOTimerEventSource* scrollTimer;
-    uint64_t momentumscrolltimer;
-    int momentumscrollthreshy;
-    uint64_t momentumscrollinterval;
-    int momentumscrollsum;
-    int64_t momentumscrollcurrent;
-    int64_t momentumscrollrest1;
-    int momentumscrollmultiplier;
-    int momentumscrolldivisor;
-    int momentumscrollrest2;
-    int momentumscrollsamplesmin;
-
-    // timer for drag delay
-    uint64_t dragexitdelay;
-    IOTimerEventSource* dragTimer;
     
-    SimpleAverage<int, 5> x_avg;
-    SimpleAverage<int, 5> y_avg;
-    //DecayingAverage<int, int64_t, 1, 1, 2> x_avg;
-    //DecayingAverage<int, int64_t, 1, 1, 2> y_avg;
-    UndecayAverage<int, int64_t, 1, 1, 2> x_undo;
-    UndecayAverage<int, int64_t, 1, 1, 2> y_undo;
-
-    SimpleAverage<int, 5> x2_avg;
-    SimpleAverage<int, 5> y2_avg;
-    //DecayingAverage<int, int64_t, 1, 1, 2> x2_avg;
-    //DecayingAverage<int, int64_t, 1, 1, 2> y2_avg;
-    UndecayAverage<int, int64_t, 1, 1, 2> x2_undo;
-    UndecayAverage<int, int64_t, 1, 1, 2> y2_undo;
-
 	enum
     {
         // "no touch" modes... must be even (see isTouchMode)
@@ -204,16 +134,6 @@ protected:
 
     inline bool isTouchMode() { return touchmode & 1; }
 
-    inline bool isInDisableZone(int x, int y)
-        { return x > diszl && x < diszr && y > diszb && y < diszt; }
-
-    // Sony: coordinates captured from single touch event
-    // Don't know what is the exact value of x and y on edge of touchpad
-    // the best would be { return x > xmax/2 && y < ymax/4; }
-
-    inline bool isInRightClickZone(int x, int y)
-        { return x > rczl && x < rczr && y > rczb && y < rczt; }
-
     virtual void   setTouchPadEnable( bool enable ) = 0;
 	virtual PS2InterruptResult interruptOccurred(UInt8 data) = 0;
     virtual void packetReady() = 0;
@@ -225,11 +145,7 @@ protected:
     virtual void touchpadShutdown() {};
     virtual void initTouchPad();
 
-    inline bool isFingerTouch(int z) { return z>z_finger && z<zlimit; }
-
-    void onScrollTimer(void);
-    void onButtonTimer(void);
-    void onDragTimer(void);
+    void onGestureTimer();
 
     enum MBComingFrom { fromPassthru, fromTimer, fromTrackpad, fromCancel };
     UInt32 middleButton(UInt32 buttons, uint64_t now, MBComingFrom from);
@@ -239,6 +155,7 @@ protected:
 	virtual IOItemCount buttonCount();
 	virtual IOFixed     resolution();
     virtual bool deviceSpecificInit() = 0;
+    
     inline void dispatchRelativePointerEventX(int dx, int dy, UInt32 buttonState, uint64_t now)
         { dispatchRelativePointerEvent(dx, dy, buttonState, *(AbsoluteTime*)&now); }
     inline void dispatchScrollWheelEventX(short deltaAxis1, short deltaAxis2, short deltaAxis3, uint64_t now)
@@ -257,7 +174,11 @@ public:
 
     virtual UInt32 deviceType();
     virtual UInt32 interfaceID();
-
+    
+    void updateRelativeMouse(int dx, int dy, int buttons);
+    void updateScroll(short dy, short dx, short dz);
+    void updateKeyboard(char keyCode);
+    
 	virtual IOReturn setParamProperties(OSDictionary * dict);
 	virtual IOReturn setProperties(OSObject *props);
 };

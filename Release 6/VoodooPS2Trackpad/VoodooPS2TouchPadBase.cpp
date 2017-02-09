@@ -22,7 +22,7 @@ UInt32 VoodooPS2TouchPadBase::interfaceID()
 { return NX_EVS_DEVICE_INTERFACE_BUS_ACE; };
 
 IOItemCount VoodooPS2TouchPadBase::buttonCount() { return _buttonCount; };
-IOFixed     VoodooPS2TouchPadBase::resolution()  { return _resolution << 16; };
+IOFixed     VoodooPS2TouchPadBase::resolution()  { return (300) << 16; };
 
 #define abs(x) ((x) < 0 ? -(x) : (x))
 
@@ -68,71 +68,13 @@ bool VoodooPS2TouchPadBase::init(OSDictionary * dict)
     // set defaults for configuration items
     
 	z_finger=45;
-	divisorx=divisory=1;
-	ledge=1700;
-	redge=5200;
-	tedge=4200;
-	bedge=1700;
-	vscrolldivisor=30;
-	hscrolldivisor=30;
-	cscrolldivisor=0;
-	ctrigger=0;
-	centerx=3000;
-	centery=3000;
-	maxtaptime=130000000;
-	maxdragtime=230000000;
-	hsticky=0;
-	vsticky=0;
-	wsticky=0;
-	tapstable=1;
-	wlimit=9;
-	wvdivisor=30;
-	whdivisor=30;
-	clicking=true;
     rtap=true;
-	dragging=true;
-    threefingervertswipe=true;
-    threefingerhorizswipe=true;
-	draglock=false;
-    draglocktemp=0;
-	hscroll=vscroll=true;
-	scroll=true;
-    outzone_wt = palm = palm_wt = false;
-    zlimit = 100;
     noled = false;
     maxaftertyping = 500000000;
-    mousemultiplierx = 20;
-    mousemultipliery = 20;
-    mousescrollmultiplierx = 20;
-    mousescrollmultipliery = 20;
-    mousemiddlescroll = true;
-    wakedelay = 1000;
-    skippassthru = false;
-    tapthreshx = tapthreshy = 50;
-    dblthreshx = dblthreshy = 100;
-    zonel = 1700;  zoner = 5200;
-    zonet = 99999; zoneb = 0;
-    diszl = 0; diszr = 1700;
-    diszt = 99999; diszb = 4200;
-    diszctrl = 0;
     _resolution = 2300;
-    _scrollresolution = 2300;
+    _scrollresolution = 800;
     swipedx = swipedy = 800;
-    rczl = 3800; rczt = 2000;
-    rczr = 99999; rczb = 0;
     _buttonCount = 2;
-    swapdoubletriple = false;
-    draglocktempmask = 0x0100010; // default is Command key
-    clickpadclicktime = 300000000; // 300ms default
-    clickpadtrackboth = true;
-    
-    bogusdxthresh = 400;
-    bogusdythresh = 350;
-    
-    scrolldxthresh = 10;
-    scrolldythresh = 10;
-    
-    immediateclick = true;
 
     xupmm = yupmm = 50; // 50 is just arbitrary, but same
     
@@ -142,9 +84,6 @@ bool VoodooPS2TouchPadBase::init(OSDictionary * dict)
     
 	lastx=0;
 	lasty=0;
-    last_fingers;
-	xrest=0;
-	yrest=0;
     lastbuttons=0;
     
     // intialize state for secondary packets/extendedwmode
@@ -156,7 +95,6 @@ bool VoodooPS2TouchPadBase::init(OSDictionary * dict)
     tracksecondary=false;
     
     // state for middle button
-    _buttonTimer = 0;
     _mbuttonstate = STATE_NOBUTTONS;
     _pendingbuttons = 0;
     _buttontime = 0;
@@ -165,7 +103,6 @@ bool VoodooPS2TouchPadBase::init(OSDictionary * dict)
     
     ignoredeltas=0;
     ignoredeltasstart=0;
-	scrollrest=0;
     touchtime=untouchtime=0;
 	wastriple=wasdouble=false;
     keytime = 0;
@@ -180,21 +117,6 @@ bool VoodooPS2TouchPadBase::init(OSDictionary * dict)
     usb_mouse_stops_trackpad = true;
     _modifierdown = 0;
     scrollzoommask = 0;
-    
-    inSwipeLeft=inSwipeRight=inSwipeDown=inSwipeUp=0;
-    xmoved=ymoved=0;
-    
-    momentumscroll = true;
-    scrollTimer = 0;
-    momentumscrolltimer = 10000000;
-    momentumscrollthreshy = 7;
-    momentumscrollmultiplier = 98;
-    momentumscrolldivisor = 100;
-    momentumscrollsamplesmin = 3;
-    momentumscrollcurrent = 0;
-    
-    dragexitdelay = 100000000;
-    dragTimer = 0;
     
 	touchmode=MODE_NOTOUCH;
     
@@ -241,7 +163,7 @@ bool VoodooPS2TouchPadBase::start( IOService * provider )
 
     setProperty(kIOHIDPointerAccelerationTypeKey, kIOHIDTrackpadAccelerationType);
     setProperty(kIOHIDScrollAccelerationTypeKey, kIOHIDTrackpadScrollAccelerationKey);
-	setProperty(kIOHIDScrollResolutionKey, _scrollresolution << 16, 32);
+	setProperty(kIOHIDScrollResolutionKey, 800 << 16, 32);
     
     //
     // Setup workloop with command gate for thread synchronization...
@@ -255,44 +177,10 @@ bool VoodooPS2TouchPadBase::start( IOService * provider )
     }
     
     //
-    // Setup button timer event source
-    //
-    if (_buttonCount >= 3)
-    {
-        _buttonTimer = IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &VoodooPS2TouchPadBase::onButtonTimer));
-        if (!_buttonTimer)
-        {
-            _device->release();
-            return false;
-        }
-        pWorkLoop->addEventSource(_buttonTimer);
-    }
-    
-    //
-    // Setup dragTimer event source
-    //
-    if (dragexitdelay)
-    {
-        dragTimer = IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &VoodooPS2TouchPadBase::onDragTimer));
-        if (dragTimer)
-            pWorkLoop->addEventSource(dragTimer);
-    }
-    
-    pWorkLoop->addEventSource(_cmdGate);
-    
-    //
-    // Setup scrolltimer event source
-    //
-    scrollTimer = IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &VoodooPS2TouchPadBase::onScrollTimer));
-    if (scrollTimer)
-        pWorkLoop->addEventSource(scrollTimer);
-    
-    //
     // Lock the controller during initialization
     //
     
     _device->lock();
-
 
     //
     // Perform any implementation specific device initialization
@@ -302,6 +190,31 @@ bool VoodooPS2TouchPadBase::start( IOService * provider )
         _device->release();
         // TODO: any other cleanup?
         return false;
+    }
+    
+    _xraw1 = _xraw2 = _yraw1 = _yraw2 = _fingerCount = -1;
+    _buttonDown = false;
+    
+    //
+    // Setup scrolltimer event source
+    //
+    
+    softc.settings.multiFingerTap = false;
+    softc.settings.tapToClickEnabled = false;
+    softc.settings.tapDragEnabled = false;
+    
+    softc.lastlegacycount = 0;
+    softc.legacycount = 0;
+    
+    _csgesture = new CSGesture;
+    _csgesture->softc = &softc;
+    _csgesture->_pointingWrapper = this;
+    _csgesture->initialize_wrapper(this);
+    
+    _gestureTimer = IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &VoodooPS2TouchPadBase::onGestureTimer));
+    if (_gestureTimer){
+        pWorkLoop->addEventSource(_gestureTimer);
+        _gestureTimer->setTimeoutMS(10);
     }
 
     //
@@ -353,17 +266,11 @@ void VoodooPS2TouchPadBase::stop( IOService * provider )
     IOWorkLoop* pWorkLoop = getWorkLoop();
     if (pWorkLoop)
     {
-        if (scrollTimer)
+        if (_gestureTimer)
         {
-            pWorkLoop->removeEventSource(scrollTimer);
-            scrollTimer->release();
-            scrollTimer = 0;
-        }
-        if (_buttonTimer)
-        {
-            pWorkLoop->removeEventSource(_buttonTimer);
-            _buttonTimer->release();
-            _buttonTimer = 0;
+            pWorkLoop->removeEventSource(_gestureTimer);
+            _gestureTimer->release();
+            _gestureTimer = 0;
         }
         if (_cmdGate)
         {
@@ -371,6 +278,11 @@ void VoodooPS2TouchPadBase::stop( IOService * provider )
             _cmdGate->release();
             _cmdGate = 0;
         }
+    }
+    
+    if (_csgesture){
+        _csgesture->destroy_wrapper();
+        _csgesture = 0;
     }
     
     //
@@ -411,197 +323,7 @@ void VoodooPS2TouchPadBase::stop( IOService * provider )
 	super::stop(provider);
 }
 
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-void VoodooPS2TouchPadBase::onScrollTimer(void)
-{
-    //
-    // This will be invoked by our workloop timer event source to implement
-    // momentum scroll.
-    //
-    
-    if (!momentumscrollcurrent)
-        return;
-    
-    uint64_t now_abs;
-	clock_get_uptime(&now_abs);
-    
-    int64_t dy64 = momentumscrollcurrent / (int64_t)momentumscrollinterval + momentumscrollrest2;
-    int dy = (int)dy64;
-    if (abs(dy) > momentumscrollthreshy)
-    {
-        // dispatch the scroll event
-        dispatchScrollWheelEventX(wvdivisor ? dy / wvdivisor : 0, 0, 0, now_abs);
-        momentumscrollrest2 = wvdivisor ? dy % wvdivisor : 0;
-    
-        // adjust momentumscrollcurrent
-        momentumscrollcurrent = momentumscrollcurrent * momentumscrollmultiplier + momentumscrollrest1;
-        momentumscrollrest1 = momentumscrollcurrent % momentumscrolldivisor;
-        momentumscrollcurrent /= momentumscrolldivisor;
-        
-        // start another timer
-        setTimerTimeout(scrollTimer, momentumscrolltimer);
-    }
-    else
-    {
-        // no more scrolling...
-        momentumscrollcurrent = 0;
-    }
-}
-
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-void VoodooPS2TouchPadBase::onButtonTimer(void)
-{
-	uint64_t now_abs;
-	clock_get_uptime(&now_abs);
-    
-    middleButton(lastbuttons, now_abs, fromTimer);
-}
-
-UInt32 VoodooPS2TouchPadBase::middleButton(UInt32 buttons, uint64_t now_abs, MBComingFrom from)
-{
-    if (!_fakemiddlebutton || _buttonCount <= 2 || (ignoreall && fromTrackpad == from))
-        return buttons;
-    
-    // cancel timer if we see input before timeout has fired, but after expired
-    bool timeout = false;
-    uint64_t now_ns;
-    absolutetime_to_nanoseconds(now_abs, &now_ns);
-    if (fromTimer == from || fromCancel == from || now_ns - _buttontime > _maxmiddleclicktime)
-        timeout = true;
-
-    //
-    // A state machine to simulate middle buttons with two buttons pressed
-    // together.
-    //
-    switch (_mbuttonstate)
-    {
-        // no buttons down, waiting for something to happen
-        case STATE_NOBUTTONS:
-            if (fromCancel != from)
-            {
-                if (buttons & 0x4)
-                    _mbuttonstate = STATE_NOOP;
-                else if (0x3 == buttons)
-                    _mbuttonstate = STATE_MIDDLE;
-                else if (0x0 != buttons)
-                {
-                    // only single button, so delay this for a bit
-                    _pendingbuttons = buttons;
-                    _buttontime = now_ns;
-                    setTimerTimeout(_buttonTimer, _maxmiddleclicktime);
-                    _mbuttonstate = STATE_WAIT4TWO;
-                }
-            }
-            break;
-            
-        // waiting for second button to come down or timeout
-        case STATE_WAIT4TWO:
-            if (!timeout && 0x3 == buttons)
-            {
-                _pendingbuttons = 0;
-                cancelTimer(_buttonTimer);
-                _mbuttonstate = STATE_MIDDLE;
-            }
-            else if (timeout || buttons != _pendingbuttons)
-            {
-                if (fromTimer == from || !(buttons & _pendingbuttons))
-                    dispatchRelativePointerEventX(0, 0, buttons|_pendingbuttons, now_abs);
-                _pendingbuttons = 0;
-                cancelTimer(_buttonTimer);
-                if (0x0 == buttons)
-                    _mbuttonstate = STATE_NOBUTTONS;
-                else
-                    _mbuttonstate = STATE_NOOP;
-            }
-            break;
-            
-        // both buttons down and delivering middle button
-        case STATE_MIDDLE:
-            if (0x0 == buttons)
-                _mbuttonstate = STATE_NOBUTTONS;
-            else if (0x3 != (buttons & 0x3))
-            {
-                // only single button, so delay to see if we get to none
-                _pendingbuttons = buttons;
-                _buttontime = now_ns;
-                setTimerTimeout(_buttonTimer, _maxmiddleclicktime);
-                _mbuttonstate = STATE_WAIT4NONE;
-            }
-            break;
-            
-        // was middle button, but one button now up, waiting for second to go up
-        case STATE_WAIT4NONE:
-            if (!timeout && 0x0 == buttons)
-            {
-                _pendingbuttons = 0;
-                cancelTimer(_buttonTimer);
-                _mbuttonstate = STATE_NOBUTTONS;
-            }
-            else if (timeout || buttons != _pendingbuttons)
-            {
-                if (fromTimer == from)
-                    dispatchRelativePointerEventX(0, 0, buttons|_pendingbuttons, now_abs);
-                _pendingbuttons = 0;
-                cancelTimer(_buttonTimer);
-                if (0x0 == buttons)
-                    _mbuttonstate = STATE_NOBUTTONS;
-                else
-                    _mbuttonstate = STATE_NOOP;
-            }
-            break;
-            
-        case STATE_NOOP:
-            if (0x0 == buttons)
-                _mbuttonstate = STATE_NOBUTTONS;
-            break;
-    }
-    
-    // modify buttons after new state set
-    switch (_mbuttonstate)
-    {
-        case STATE_MIDDLE:
-            buttons = 0x4;
-            break;
-            
-        case STATE_WAIT4NONE:
-        case STATE_WAIT4TWO:
-            buttons &= ~0x3;
-            break;
-            
-        case STATE_NOBUTTONS:
-        case STATE_NOOP:
-            break;
-    }
-    
-    // return modified buttons
-    return buttons;
-}
-
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-void VoodooPS2TouchPadBase::onDragTimer(void)
-{
-    if (MODE_DRAGNOTOUCH==touchmode)
-    {
-        touchmode=MODE_NOTOUCH;
-        
-        uint64_t now_abs;
-        clock_get_uptime(&now_abs);
-        UInt32 buttons = middleButton(lastbuttons & ~0x01, now_abs, fromPassthru);
-        DEBUG_LOG("ps2: onDragTimer, button = %d\n", buttons);
-        dispatchRelativePointerEventX(0, 0, buttons, now_abs);
-    }
-    else
-    {
-        //REVIEW: for debugging...
-        IOLog("rehab: onDragTimer called with unexpected mode = %d\n", touchmode);
-    }
-    //TODO: cancel dragnotouch mode, revert to notouch
-    //TODO: send lbutton up without modifying other buttons
-    //TODO: find other places the timer should be cancelled.
-}
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
@@ -637,104 +359,29 @@ void VoodooPS2TouchPadBase::setParamPropertiesGated(OSDictionary * config)
     
 	const struct {const char *name; int *var;} int32vars[]={
 		{"FingerZ",							&z_finger},
-		{"DivisorX",						&divisorx},
-		{"DivisorY",						&divisory},
-		{"EdgeRight",						&redge},
-		{"EdgeLeft",						&ledge},
-		{"EdgeTop",							&tedge},
-		{"EdgeBottom",						&bedge},
-		{"VerticalScrollDivisor",			&vscrolldivisor},
-		{"HorizontalScrollDivisor",			&hscrolldivisor},
-		{"CircularScrollDivisor",			&cscrolldivisor},
-		{"CenterX",							&centerx},
-		{"CenterY",							&centery},
-		{"CircularScrollTrigger",			&ctrigger},
-		{"MultiFingerWLimit",				&wlimit},
-		{"MultiFingerVerticalDivisor",		&wvdivisor},
-		{"MultiFingerHorizontalDivisor",	&whdivisor},
-        {"ZLimit",                          &zlimit},
-        {"MouseMultiplierX",                &mousemultiplierx},
-        {"MouseMultiplierY",                &mousemultipliery},
-        {"MouseScrollMultiplierX",          &mousescrollmultiplierx},
-        {"MouseScrollMultiplierY",          &mousescrollmultipliery},
-        {"WakeDelay",                       &wakedelay},
-        {"TapThresholdX",                   &tapthreshx},
-        {"TapThresholdY",                   &tapthreshy},
-        {"DoubleTapThresholdX",             &dblthreshx},
-        {"DoubleTapThresholdY",             &dblthreshy},
-        {"ZoneLeft",                        &zonel},
-        {"ZoneRight",                       &zoner},
-        {"ZoneTop",                         &zonet},
-        {"ZoneBottom",                      &zoneb},
-        {"DisableZoneLeft",                 &diszl},
-        {"DisableZoneRight",                &diszr},
-        {"DisableZoneTop",                  &diszt},
-        {"DisableZoneBottom",               &diszb},
-        {"DisableZoneControl",              &diszctrl},
         {"Resolution",                      &_resolution},
         {"ScrollResolution",                &_scrollresolution},
         {"SwipeDeltaX",                     &swipedx},
         {"SwipeDeltaY",                     &swipedy},
         {"MouseCount",                      &mousecount},
-        {"RightClickZoneLeft",              &rczl},
-        {"RightClickZoneRight",             &rczr},
-        {"RightClickZoneTop",               &rczt},
-        {"RightClickZoneBottom",            &rczb},
         {"HIDScrollZoomModifierMask",       &scrollzoommask},
         {"ButtonCount",                     &_buttonCount},
-        {"DragLockTempMask",                &draglocktempmask},
-        {"MomentumScrollThreshY",           &momentumscrollthreshy},
-        {"MomentumScrollMultiplier",        &momentumscrollmultiplier},
-        {"MomentumScrollDivisor",           &momentumscrolldivisor},
-        {"MomentumScrollSamplesMin",        &momentumscrollsamplesmin},
         {"FingerChangeIgnoreDeltas",        &ignoredeltasstart},
-        {"BogusDeltaThreshX",               &bogusdxthresh},
-        {"BogusDeltaThreshY",               &bogusdythresh},
         {"UnitsPerMMX",                     &xupmm},
         {"UnitsPerMMY",                     &yupmm},
-        {"ScrollDeltaThreshX",              &scrolldxthresh},
-        {"ScrollDeltaThreshY",              &scrolldythresh},
-        {"TrackpadThreeFingerVertSwipeGesture", &threefingervertswipe},
-        {"TrackpadThreeFingerHorizSwipeGesture", &threefingerhorizswipe},
 	};
 	const struct {const char *name; int *var;} boolvars[]={
-		{"StickyHorizontalScrolling",		&hsticky},
-		{"StickyVerticalScrolling",			&vsticky},
-		{"StickyMultiFingerScrolling",		&wsticky},
-		{"StabilizeTapping",				&tapstable},
         {"DisableLEDUpdate",                &noled},
-        {"SmoothInput",                     &smoothinput},
-        {"UnsmoothInput",                   &unsmoothinput},
-        {"SkipPassThrough",                 &skippassthru},
-        {"SwapDoubleTriple",                &swapdoubletriple},
-        {"ClickPadTrackBoth",               &clickpadtrackboth},
-        {"ImmediateClick",                  &immediateclick},
-        {"MouseMiddleScroll",               &mousemiddlescroll},
         {"FakeMiddleButton",                &_fakemiddlebutton},
 	};
     const struct {const char* name; bool* var;} lowbitvars[]={
-        {"Clicking",                        &clicking},
-        {"Dragging",                        &dragging},
         {"TrackpadRightClick",              &rtap},
-        {"DragLock",                        &draglock},
-        {"TrackpadHorizScroll",             &hscroll},
-        {"TrackpadVertScroll",              &vscroll},
-        {"TrackpadScroll",                  &scroll},
-        {"OutsidezoneNoAction When Typing", &outzone_wt},
-        {"PalmNoAction Permanent",          &palm},
-        {"PalmNoAction When Typing",        &palm_wt},
         {"USBMouseStopsTrackpad",           &usb_mouse_stops_trackpad},
         {"TrackpadMomentumScroll",          &momentumscroll},
     };
     const struct {const char* name; uint64_t* var; } int64vars[]={
-        {"MaxDragTime",                     &maxdragtime},
-        {"MaxTapTime",                      &maxtaptime},
-        {"HIDClickTime",                    &maxdbltaptime},
         {"QuietTimeAfterTyping",            &maxaftertyping},
-        {"MomentumScrollTimer",             &momentumscrolltimer},
-        {"ClickPadClickTime",               &clickpadclicktime},
         {"MiddleClickTime",                 &_maxmiddleclicktime},
-        {"DragExitDelayTime",               &dragexitdelay},
     };
     
     int oldmousecount = mousecount;
@@ -778,49 +425,6 @@ void VoodooPS2TouchPadBase::setParamPropertiesGated(OSDictionary * config)
             setProperty(lowbitvars[i].name, *lowbitvars[i].var ? 1 : 0, 32);
         }
     }
-    
-    // special case for MaxDragTime (which is really max time for a double-click)
-    // we can let it go no more than 230ms because otherwise taps on
-    // the menu bar take too long if drag mode is enabled.  The code in that case
-    // has to "hold button 1 down" for the duration of maxdragtime because if
-    // it didn't then dragging on the caption of a window will not work
-    // (some other apps too) because these apps will see a double tap+hold as
-    // a single click, then double click and they don't go into drag mode when
-    // initiated with a double click.
-    //
-    // same thing going on with the forward/back buttons in Finder, except the
-    // timeout OS X is using is different (shorter)
-    //
-    // this all happens during MODE_PREDRAG
-    //
-    // summary:
-    //  if the code releases button 1 after a tap, then dragging windows
-    //    breaks
-    //  if the maxdragtime is too large (200ms is small enough, 500ms is too large)
-    //    then clicking on menus breaks because the system sees it as a long
-    //    press and hold
-    //
-    // fyi:
-    //  also tried to allow release of button 1 during MODE_PREDRAG, and then when
-    //   attempting to initiate the drag (in the case the second touch comes soon
-    //   enough), modifying the time such that it is not seen as a double tap.
-    //  unfortunately, that destroys double tap as well, probably because the
-    //   system is confused seeing input "out of order"
-    
-    //if (maxdragtime > 230000000)
-    //    maxdragtime = 230000000;
-    
-    // DivisorX and DivisorY cannot be zero, but don't crash if they are...
-    if (!divisorx)
-        divisorx = 1;
-    if (!divisory)
-        divisory = 1;
-
-    // bogusdeltathreshx/y = 0 is MAX_INT
-    if (!bogusdxthresh)
-        bogusdxthresh = 0x7FFFFFFF;
-    if (!bogusdythresh)
-        bogusdythresh = 0x7FFFFFFF;
 
 //REVIEW: this should be done maybe only when necessary...
     touchmode=MODE_NOTOUCH;
@@ -879,6 +483,11 @@ void VoodooPS2TouchPadBase::setDevicePowerState( UInt32 whatToDo )
             //
             // Disable touchpad (synchronous).
             //
+            
+            cancelTimer(_gestureTimer);
+            
+            if (_csgesture)
+                _csgesture->prepareToSleep();
 
             setTouchPadEnable( false );
             break;
@@ -889,12 +498,68 @@ void VoodooPS2TouchPadBase::setDevicePowerState( UInt32 whatToDo )
             // completed its power-on self-test and calibration.
             //
 
-            IOSleep(wakedelay);
+            IOSleep(1000);
             
             // Reset and enable the touchpad.
             initTouchPad();
+            
+            _gestureTimer->setTimeoutMS(10);
+            
+            if (_csgesture)
+                _csgesture->wakeFromSleep();
+            
             break;
     }
+}
+
+void VoodooPS2TouchPadBase::updateRelativeMouse(int dx, int dy, int buttons){
+    // 0x1 = left button
+    // 0x2 = right button
+    // 0x4 = middle button
+    
+    uint64_t now_abs;
+    clock_get_uptime(&now_abs);
+    dispatchRelativePointerEvent(dx, dy, buttons, now_abs);
+}
+
+void VoodooPS2TouchPadBase::updateScroll(short dy, short dx, short dz){
+    uint64_t now_abs;
+    clock_get_uptime(&now_abs);
+    //if (!horizontalScroll)
+    //    dx = 0;
+    dispatchScrollWheelEvent(dy, dx, dz, now_abs);
+}
+
+void VoodooPS2TouchPadBase::updateKeyboard(char keyCode){
+    uint64_t now_abs;
+    clock_get_uptime(&now_abs);
+    if (keyCode == 0x52){
+        _device->dispatchKeyboardMessage(kPS2M_swipeUp, &now_abs);
+    } else if (keyCode == 0x51){
+        _device->dispatchKeyboardMessage(kPS2M_swipeDown, &now_abs);
+    } else if (keyCode == 0x4F){
+        _device->dispatchKeyboardMessage(kPS2M_swipeLeft, &now_abs);
+    } else if (keyCode == 0x50){
+        _device->dispatchKeyboardMessage(kPS2M_swipeRight, &now_abs);
+    }
+}
+
+void VoodooPS2TouchPadBase::onGestureTimer(){
+    softc.lastlegacycount = softc.legacycount;
+    softc.enableLegacyMode = true;
+    
+    softc.legacycount = _fingerCount;
+    softc.legacyx[0] = _xraw1;
+    softc.legacyy[0] = _yraw1;
+    
+    softc.legacyx[1] = _xraw2;
+    softc.legacyy[1] = _yraw2;
+    
+    softc.buttondown = _buttonDown;
+    
+    _csgesture->LegacyProcessGesture(&softc);
+    
+    _gestureTimer->setTimeoutMS(10);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1006,7 +671,8 @@ void VoodooPS2TouchPadBase::receiveMessage(int message, void* data)
                     break;
                     
                 default:
-                    momentumscrollcurrent = 0;  // keys cancel momentum scroll
+                    //TODO: CANCEL MOMENTUM CURRENT HERE
+                    //momentumscrollcurrent = 0;  // keys cancel momentum scroll
                     keytime = pInfo->time;
             }
             break;
