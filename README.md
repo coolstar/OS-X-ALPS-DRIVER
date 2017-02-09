@@ -2,6 +2,8 @@
 
 This driver is based on Rehabman's VoodooPS2 driver for macOS, Linux 4.7, and bpedman's earlier work. V7 support was ported by coolstarorg.
 
+CSGesture has been implemented by CoolStar to improve the usability of ALPS Clickpads in macOS.
+
 The aim of this driver is to improve the usability of ALPS TouchPads in macOS.
 
 Driver Features:
